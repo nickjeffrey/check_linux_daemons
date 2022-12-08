@@ -6,14 +6,15 @@ perl, SSH key pair auth
 
 # Configuration
 Add a section similar to the following to the services.cfg file on the nagios server.
-
+```
 define service{
         use                             generic-service
         host_name                       linux01.example.com
         service_description             linux daemons
         check_command                   check_by_ssh!"/usr/local/nagios/libexec/check_linux_daemons"
         }
-        
+```
+
 # Output
 You will see output similar to the following:
 ```
