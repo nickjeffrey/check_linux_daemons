@@ -1,0 +1,635 @@
+#!/usr/bin/perl -w
+
+# FUTURE ENHANCEMENTS
+# -------------------
+# add host-specific checks for daemons that do not run everywhere (postfix, vsftpd, etc)
+ 
+# CHANGE LOG
+# ----------
+#  2022/11/30	njeffrey	Script created
+#  2022/12/02	njeffrey	Add subroutines: check_nutanix_guest_tools, check_vmware_guest_tools, check_virtualbox_guest_tools 
+#  2022/12/02	njeffrey	Add subroutines: check_supervisord_daemon, check_supervisord_controlled_processes
+#  2022/12/07	njeffrey	Add subroutines: check_assorted_daemons
+
+
+# NOTES
+# -----
+#  This script performs basic health checks on Linux for running daemons
+#
+#  Tested on CentOS 7,8,9 Ubuntu 22.04 
+#
+#
+#  This script is executed remotely on a monitored system by the NRPE or check_by_ssh
+#  methods available in nagios.
+#
+#  If you are using the check_by_ssh method, you will need a section in the services.cfg
+#  file on the nagios server that looks similar to the following.
+#  This assumes that you already have ssh key pairs configured.
+#   # Define service for checking time synchronization
+#   define service{
+#           use                             generic-24x7-service
+#           host_name                       unix11
+#           service_description             linux daemons
+#           check_command                   check_by_ssh!"/usr/local/nagios/libexec/check_linux_daemons"
+#           }
+#
+#  If you are using the check_nrpe method, you will need a section in the services.cfg
+#  file on the nagios server that looks similar to the following.
+#  This assumes that you already have ssh key pairs configured.
+#   # Define service for checking time synchronization
+#   define service{
+#           use                             generic-24x7-service
+#           host_name                       unix11
+#           service_description             linux daemons
+#           check_command                   check_nrpe!check_linux_daemons -t 30
+#           }
+#
+#  If using NRPE, you will also need a section defining the NRPE command in the /usr/local/nagios/nrpe.cfg file that looks like this:
+#   command[check_linux_daemons]=/usr/local/nagios/libexec/check_linux_daemons
+#
+
+
+
+
+# ASSUMPTIONS
+# -----------
+#  It is assumed that perl is installed on the machine running this script.
+#     For RHEL / CentOS     yum install perl
+#     For Debian / Ubuntu   apt install perl
+#
+#  It is assumed that this script is being run as a low-privileged user (typically nagios), and that 
+#  typical user permissions are sufficient to run the commands in this script.
+#
+#
+
+# NOTES ON SYSTEMD
+# ----------------
+
+
+
+
+# TROUBLESHOOTING
+# ---------------
+
+use strict;						#enforce good coding practices
+use Getopt::Long;                       		#allow --long-switches to be used as parameters
+
+#declare variables
+my ($verbose,$os,$cmd,$key,$count);
+my (%os,%daemons,@monitored_daemons,%supervisord);
+my ($systemctl,$uname,$ps,$dmesg);
+my ($common_output_data,$perf_data);
+my ($OK,$WARN,$CRITICAL,$UNKNOWN,$CHECK_NAME);
+my ($offset,$last_update);
+my ($opt_h,$opt_v);
+$verbose            = "no";				#yes/no flag to increase verbosity during debugging
+$common_output_data = "";                               #nagios output
+$perf_data          = "";                               #nagios performance data included in output
+$CHECK_NAME         = "linux daemons";
+@monitored_daemons  = ("auditd.service","chronyd.service","crond.service","fail2ban.service","firewalld.service","rsyslog.service","snmpd.service");
+$daemons{count}{running}     = 0;					#initialize counter
+$daemons{count}{not_running} = 0;					#initialize counter
+#
+# Nagios return codes
+#
+$OK=		0;
+$WARN=		1;
+$CRITICAL=	2;
+$UNKNOWN=	3;
+
+
+
+
+sub get_options {
+   #
+   # this gets the command line parameters provided by the users
+   #
+   print "Running get_options subroutine \n" if ($verbose eq "yes");
+   Getopt::Long::Configure('bundling');
+   GetOptions(
+      "h"   => \$opt_h, "help"        => \$opt_h,
+      "v"   => \$opt_v, "verbose"      => \$opt_v,
+   );
+   #
+   # If the user supplied the -h or --help switch, give them some help.
+   #
+   if( defined( $opt_h ) ) {
+      print "Use this syntax \n";
+      print "   $0 \n";
+      print "   $0 --verbose     (increase output for debugging \n";
+      exit $CRITICAL;				#exit script
+   }
+   #
+   # If the user supplied the --verbose switch, increase output verbosity
+   #
+   if( defined( $opt_v ) ) {
+      $verbose = "yes";
+   } else {
+      $verbose = "no";
+   }
+}                       #end of subroutine
+
+
+
+
+
+sub sanity_checks {
+   #
+   print "Running sanity_checks subroutine \n" if ($verbose eq "yes");
+   #
+   # confirm ps binary exists and is executable
+   # figure out where the ps command is on this system (varies across UNIX flavors)
+   $ps = "/bin/ps"      if ( -e "/bin/ps");		
+   $ps = "/sbin/ps"     if ( -e "/sbin/ps");		
+   $ps = "/usr/bin/ps"  if ( -e "/usr/bin/ps");		
+   $ps = "/usr/sbin/ps" if ( -e "/usr/sbin/ps");		
+   if ( ! -e $ps ) {
+      print "ERROR: Cannot find $ps binary \n";
+      exit $CRITICAL;
+   }
+   if ( ! -x $ps ) {
+      print "ERROR: $ps is not executable by the current user \n";
+      exit $CRITICAL;
+   }
+   print "   found ps binary at $ps \n" if ($verbose eq "yes");
+   #
+   # confirm uname binary exists and is executable
+   # figure out where the uname command is on this system (varies across UNIX flavors)
+   $uname = "/bin/uname"      if ( -e "/bin/uname");	
+   $uname = "/sbin/uname"     if ( -e "/sbin/uname");	
+   $uname = "/usr/bin/uname"  if ( -e "/usr/bin/uname");	
+   $uname = "/usr/sbin/uname" if ( -e "/usr/sbin/uname");	
+   if ( ! -e $uname ) {
+      print "ERROR: Cannot find $uname binary \n";
+      exit $CRITICAL;
+   }
+   if ( ! -x $uname ) {
+      print "ERROR: $uname is not executable by the current user \n";
+      exit $CRITICAL;
+   }
+   print "   found uname binary at $uname \n" if ($verbose eq "yes");
+   #
+   # confirm systemctl binary exists and is executable
+   $systemctl = "/usr/bin/systemctl";	
+   if ( ! -e $systemctl ) {
+      print "ERROR: Cannot find $systemctl binary \n";
+      exit $CRITICAL;
+   }
+   if ( ! -x $systemctl ) {
+      print "ERROR: $systemctl is not executuable by the current user \n";
+      exit $CRITICAL;
+   }
+   print "   found systemctl binary at $systemctl \n" if ($verbose eq "yes");
+   #
+   # confirm dmesg binary exists and is executable
+   $dmesg = "/usr/bin/dmesg";	
+   if ( ! -e $dmesg ) {
+      print "ERROR: Cannot find $dmesg binary \n";
+      exit $CRITICAL;
+   }
+   if ( ! -x $dmesg ) {
+      print "ERROR: $dmesg is not executuable by the current user \n";
+      exit $CRITICAL;
+   }
+   print "   found dmesg binary at $systemctl \n" if ($verbose eq "yes");
+}						#end of subroutine
+
+
+
+
+sub determine_os {
+   #
+   print "Running determine_os subroutine \n" if ($verbose eq "yes");
+   #
+   $cmd = "$uname";
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |");                                                   #open filehandle using command output
+   while (<IN>) {                                                       #read a line from the command output
+      unless (/Linux/) {
+         print "ERROR: Cannot determine operating system from output of $uname command \n";
+         exit $UNKNOWN;
+      } 								#end of unless block
+   }									#end of while loop
+   print "   operating system is Linux \n" if ($verbose eq "yes");
+}						#end of subroutine
+
+
+sub get_linux_version {
+   #
+   print "Running get_linux_version subroutine \n" if ($verbose eq "yes");
+   #
+   # The contents of the /etc/os-release file on Oracle Linux looks like this:
+   # # cat /etc/os-release
+   # NAME="Oracle Linux Server"
+   # VERSION="8.6"
+   # ID="ol"
+   # ID_LIKE="fedora"
+   # VARIANT="Server"
+   # VARIANT_ID="server"
+   # VERSION_ID="8.6"
+   # PLATFORM_ID="platform:el8"
+   # PRETTY_NAME="Oracle Linux Server 8.6"
+   # ANSI_COLOR="0;31"
+   # CPE_NAME="cpe:/o:oracle:linux:8:6:server"
+   # HOME_URL="https://linux.oracle.com/"
+   # BUG_REPORT_URL="https://bugzilla.oracle.com/"
+   # ORACLE_BUGZILLA_PRODUCT="Oracle Linux 8"
+   # ORACLE_BUGZILLA_PRODUCT_VERSION=8.6
+   # ORACLE_SUPPORT_PRODUCT="Oracle Linux"
+   # ORACLE_SUPPORT_PRODUCT_VERSION=8.6
+   #
+   # The contents of the /etc/os-release file on Red Hat Enterprise Linux looks like this:
+   # # cat /etc/os-release
+   # NAME="Red Hat Enterprise Linux"
+   # VERSION="8.5 (Ootpa)"
+   # ID="rhel"
+   # ID_LIKE="fedora"
+   # VERSION_ID="8.5"
+   # PLATFORM_ID="platform:el8"
+   # PRETTY_NAME="Red Hat Enterprise Linux 8.5 (Ootpa)"
+   # ANSI_COLOR="0;31"
+   # CPE_NAME="cpe:/o:redhat:enterprise_linux:8::baseos"
+   # HOME_URL="https://www.redhat.com/"
+   # DOCUMENTATION_URL="https://access.redhat.com/documentation/red_hat_enterprise_linux/8/"
+   # BUG_REPORT_URL="https://bugzilla.redhat.com/"
+   # REDHAT_BUGZILLA_PRODUCT="Red Hat Enterprise Linux 8"
+   # REDHAT_BUGZILLA_PRODUCT_VERSION=8.5
+   # REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux"
+   # REDHAT_SUPPORT_PRODUCT_VERSION="8.5"
+   #
+   # The contents of the /etc/os-release file on CentOS 7.x,8.x (not CentOS Stream) looks like this:
+   # # cat /etc/os-release
+   # VERSION="7 (Core)"
+   # D="centos"
+   # ID_LIKE="rhel fedora"
+   # VERSION_ID="7"
+   # PRETTY_NAME="CentOS Linux 7 (Core)"
+   # ANSI_COLOR="0;31"
+   # CPE_NAME="cpe:/o:centos:centos:7"
+   # HOME_URL="https://www.centos.org/"
+   # BUG_REPORT_URL="https://bugs.centos.org/"
+   # CENTOS_MANTISBT_PROJECT="CentOS-7"
+   # CENTOS_MANTISBT_PROJECT_VERSION="7"
+   # REDHAT_SUPPORT_PRODUCT="centos"
+   # REDHAT_SUPPORT_PRODUCT_VERSION="7"
+   #
+   # The contents of the /etc/os-release file on CentOS Stream 9.x looks like this:
+   # # cat /etc/os-release
+   # NAME="CentOS Stream"
+   # VERSION="9"
+   # ID="centos"
+   # ID_LIKE="rhel fedora"
+   # VERSION_ID="9"
+   # PLATFORM_ID="platform:el9"
+   # PRETTY_NAME="CentOS Stream 9"
+   # ANSI_COLOR="0;31"
+   # CPE_NAME="cpe:/o:centos:centos:9"
+   # HOME_URL="https://centos.org/"
+   # BUG_REPORT_URL="https://bugzilla.redhat.com/"
+   # REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux 9"
+   # REDHAT_SUPPORT_PRODUCT_VERSION="CentOS Stream"
+   #
+   # The contents of the /etc/os-release file on Ubuntu looks like this:
+   # # cat /etc/os-release
+   # PRETTY_NAME="Ubuntu 22.04 LTS"
+   # NAME="Ubuntu"
+   # VERSION_ID="22.04"
+   # VERSION="22.04 (Jammy Jellyfish)"
+   # VERSION_CODENAME=jammy
+   # ID=ubuntu
+   # ID_LIKE=debian
+   # HOME_URL="https://www.ubuntu.com/"
+   # SUPPORT_URL="https://help.ubuntu.com/"
+   # BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+   # PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+   # UBUNTU_CODENAME=jammy
+   #
+   #
+   #
+   #
+   unless ( -f "/etc/os-release" ) {
+      print "ERROR: Cannot find /etc/os-release file \n";
+      exit $UNKNOWN;
+   }									#end of unless block
+   print "   reading /etc/os-release file to determine Linux version \n" if ($verbose eq "yes");
+   open(IN,"/etc/os-release") or die "Cannot open /etc/os-release for reading $! \n";          #open filehandle 
+   while (<IN>) {                                                       #read a line from the command output
+      $os{name}       = $1 if ( /^NAME=\"([a-zA-Z ]+)\"/);
+      $os{version}    = $1 if ( /^VERSION=\"([0-9\.]+)\"/);		#Oracle Linux format is:  VERSION="8.5"
+      $os{version}    = $1 if ( /^VERSION=\"([0-9\.]+) \(.*\)\"/);	#RHEL format is:          VERSION="8.5 (Ootpa)"
+      $os{id}         = $1 if ( /^ID=\"([a-z]+)\"/);
+      $os{version_id} = $1 if ( /^VERSION_ID=\"([0-9\.]+)\"/);
+   }									#end of while loop
+   print "   operating system long name is $os{name} $os{version} short name is $os{id}$os{version} \n" if ($verbose eq "yes");
+}									#end of subroutine
+
+
+sub check_ssh_daemon {
+   #
+   print "Running check_ssh_daemon subroutine \n" if ($verbose eq "yes");
+   #
+   #  RHEL   derivatives call the the ssh daemon:  sshd.service  OpenSSH server daemon
+   #  Debian derivatives call the the ssh daemon:  ssh.service   OpenBSD Secure Shell server
+   #
+   # Command output on a Debian derivative looks similar to:
+   # # systemctl list-units --all
+   # ssh.service   loaded   active   running   OpenBSD Secure Shell server
+   #
+   # Command output on a RHEL derivative looks similar to:
+   # # systemctl list-units --all
+   # sshd.service  loaded   active   running   OpenSSH server daemon
+   #
+   # Figure out which SSH daemon is in use, and add to the @monitored_daemons array
+   $cmd = "$systemctl list-units --all";
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |");                                                   #open filehandle using command output
+   while (<IN>) {                                                       #read a line from the command output
+      next if (/UNIT +LOAD +ACTIVE +SUB +DESCRIPTION/);			#skip header line
+      s/\t/ /g;								#replace tabs with spaces
+      s/ +/ /g; 							#replace multiple spaces with single space to make the regex simpler
+      if (/ssh.service/)  { 
+         push (@monitored_daemons,"ssh.service");
+         print "   found SSH daemon ssh.service \n" if ($verbose eq "yes");
+      }
+      if (/sshd.service/) { 
+         push (@monitored_daemons,"sshd.service");
+         print "   found SSH daemon sshd.service \n" if ($verbose eq "yes");
+      }
+   }									#end of while loop
+   close IN;								#close filehandle
+}									#end of subroutine
+
+
+
+sub check_nutanix_guest_tools {
+   #
+   print "Running check_nutanix_guest_tools subroutine \n" if ($verbose eq "yes");
+   #
+   # If this is a virtual machine running under the Nutanix AHV hypervisor, confirm the Nutanix Guest Tools are running.
+   # Command output will look similar to the following:
+   # $ dmesg | grep Nutanix
+   # [    0.000000] DMI: Nutanix AHV, BIOS 1.11.0-2.el7 04/01/2014
+   #
+   # Query the hardware to see if the BIOS reports as being Nutanix, if so, add to the @monitored_daemons array
+   $cmd = "$dmesg";
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |");                                                   #open filehandle using command output
+   while (<IN>) {                                                       #read a line from the command output
+      if (/Nutanix AHV, BIOS/)  { 
+         push (@monitored_daemons,"ngt_guest_agent.service");
+         print "   found Nutanix AHV BIOS, adding ngt_guest_agent.service to list of monitored daemons \n" if ($verbose eq "yes");
+      }
+   }									#end of while loop
+   close IN;								#close filehandle
+}									#end of subroutine
+
+
+
+
+sub check_vmware_guest_tools {
+   #
+   print "Running check_vmware_guest_tools subroutine \n" if ($verbose eq "yes");
+   #
+   # If this is a virtual machine running under the VMware hypervisor, confirm the VMware Guest Tools are running.
+   # Command output will look similar to the following:
+   # $ dmesg | grep VMware
+   # [    0.000000] DMI: VMware, Inc. VMware Virtual Platform/440BX Desktop Reference                                                                                                                                                             
+   #
+   # Query the hardware to see if the BIOS reports as being VMware, if so, add to the @monitored_daemons array
+   $cmd = "$dmesg";
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |");                                                   #open filehandle using command output
+   while (<IN>) {                                                       #read a line from the command output
+      if (/DMI: VMware, Inc. VMware Virtual Platform/)  { 
+         push (@monitored_daemons,"vmtoolsd.service");
+         print "   found DMI: VMware, Inc. VMware Virtual Platform, adding vmtoolsd.service to list of monitored daemons \n" if ($verbose eq "yes");
+      }
+   }									#end of while loop
+   close IN;								#close filehandle
+}									#end of subroutine
+
+
+
+sub check_virtualbox_guest_tools {
+   #
+   print "Running check_virtualbox_guest_tools subroutine \n" if ($verbose eq "yes");
+   #
+   # If this is a virtual machine running under the VirtualBox hypervisor, confirm the VirtualBox Guest Additions are running.
+   # Command output will look similar to the following:
+   # $ dmesg | grep VirtualBox
+   # [    0.000000] DMI: innotek GmbH VirtualBox/VirtualBox, BIOS VirtualBox 12/01/2006
+   #
+   # Query the hardware to see if the BIOS reports as being VirtualBox, if so, add to the @monitored_daemons array
+   $cmd = "$dmesg";
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |");                                                   #open filehandle using command output
+   while (<IN>) {                                                       #read a line from the command output
+      if (/BIOS VirtualBox/)  { 
+         push (@monitored_daemons,"vboxadd.service");
+         print "   found BIOS VirtualBox, adding vboxadd.service to list of monitored daemons \n" if ($verbose eq "yes");
+      }
+   }									#end of while loop
+   close IN;								#close filehandle
+}									#end of subroutine
+
+
+sub check_supervisord_daemon {
+   #
+   print "Running check_supervisord_daemon subroutine \n" if ($verbose eq "yes");
+   #
+   # supervisord is a process control system that is simpler to use than systemd
+   # If the supervisord binary exists, add supervisord.service to @monitored_daemons
+   #
+   print "   checking for existence of /usr/bin/supervisord \n" if ($verbose eq "yes");
+   if ( -f "/usr/bin/supervisord") { 
+      push (@monitored_daemons,"supervisord.service");
+      print "   found /usr/bin/supervisord, adding supervisord.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+}									#end of subroutine
+
+
+
+
+sub check_supervisord_controlled_processes {
+   #
+   print "Running check_supervisord_controlled_processes subroutine \n" if ($verbose eq "yes");
+   #
+   # supervisord is a process control system that is simpler to use than systemd
+   # For example:
+   # $ cat /etc/supervisord.conf | grep ^command=
+   # command=/usr/local/bin/foo/bar -arg1=baz -arg2=blah             #the program (relative uses PATH, can take args)
+   #
+   print "   checking for existence of /etc/supervisord.conf \n" if ($verbose eq "yes");
+   return unless ( -f "/etc/supervisord.conf");						#break out of subroutine if the config file does not exist
+   $key = 0;										#initialize counter variable, do not use process names as keys, because / character invalid for hash keys
+   open(IN,"/etc/supervisord.conf") or warn "Cannot open /etc/supervisord.conf $! \n"; 	#open filehandle 
+   while (<IN>) {                                                    			#read a line from the command output
+      if (/^command=(.*?) /) {								#use .*? non-greedy match to only capture up to the first space character
+         $supervisord{$key}{process_name}  = $1;					#save process name in a hash
+         $supervisord{$key}{process_state} = "unknown";					#initialize hash element
+         $key++;									#increment counter
+      }											#end of if block
+   }											#end of while loop
+   close IN;										#close filehandle
+   #
+   # At this point, we have a hash containing the names of all the processes controlled by supervisord.
+   # Now we will check to see if those processes are running.
+   foreach $key (sort keys %supervisord) {
+      print "   checking to see if supervisord controlled process $supervisord{$key}{process_name} is currently running \n" if ($verbose eq "yes");
+      open(IN,"$ps -ef |");                                     			#open filehandle using command output
+      while (<IN>) {                                                    		#read a line from the command output
+         if ( /$supervisord{$key}{process_name}/ ) {
+            print "   found running process $supervisord{$key}{process_name} \n" if ($verbose eq "yes");
+            $supervisord{$key}{process_state} = "running";
+         }
+      }											#end of while loop
+      close IN;										#close filehandle
+   }											#end of foreach loop
+}											#end of subroutine
+
+
+
+sub check_assorted_daemons {
+   #
+   print "Running check_assorted_daemons subroutine \n" if ($verbose eq "yes");
+   #
+   # This subroutine checks for assorted daemons that only run on a subset of the Linux boxes.
+   # If a particular daemon is found, it is added to the list of @monitored_damons 
+   #
+   print "   checking for GitLab container called container-gitlab.service \n" if ($verbose eq "yes");
+   if ( -f "/etc/systemd/system/container-gitlab.service") { 
+      push (@monitored_daemons,"container-gitlab.service");
+      print "   found /etc/systemd/system/container-gitlab.service, adding container-gitlab.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+}									#end of subroutine
+
+
+
+
+sub check_running_daemons {
+   #
+   print "Running check_running_daemons subroutine \n" if ($verbose eq "yes");
+   #
+   # Command output looks similar to:
+   # # systemctl list-units --all
+   # UNIT                            LOAD     ACTIVE   SUB       DESCRIPTION
+   # boot.mount                      loaded   active   mounted   /boot
+   # orabackup.mount                 loaded   active   mounted   /orabackup
+   # oraglobal.mount                 loaded   active   mounted   /oraglobal
+   # auditd.service                  loaded   active   running   Security Auditing Service
+   # chronyd.service                 loaded   active   running   NTP client/server
+   # crond.service                   loaded   active   running   Command Scheduler
+   # dbus.service                    loaded   active   running   D-Bus System Message Bus
+   # dracut-shutdown.service         loaded   active   exited    Restore /run/initramfs on shutdown
+   # fail2ban.service                loaded   active   running   Fail2Ban Service
+   # firewalld.service               loaded   active   running   firewalld - dynamic firewall daemon
+   # ngt_guest_agent.service         loaded   active   running   LSB: Starts, stops Nutanix Guest Agent.
+   # postfix.service                 loaded   active   running   Postfix Mail Transport Agent
+   # rsyslog.service                 loaded   inactive dead      System Logging Service
+   #
+   #
+   #
+   #
+   foreach $key (@monitored_daemons) {
+      print "   current key is $key \n" if ($verbose eq "yes");
+      $cmd = "$systemctl list-units --all";
+      print "   running command: $cmd \n" if ($verbose eq "yes");
+      open(IN,"$cmd |");                                     		#open filehandle using command output
+      while (<IN>) {                                                    #read a line from the command output
+         next if (/UNIT +LOAD +ACTIVE +SUB +DESCRIPTION/);		#skip header line
+         s/\t/ /g;							#replace tabs with spaces
+         s/ +/ /g; 							#replace multiple spaces with single space to make the regex simpler
+         #print $_;
+         if (/$key ([a-z]+) ([a-z]+) ([a-z]+) (.*)/) {
+            $daemons{$key}{unit}        = $key;				#add hash element 
+            $daemons{$key}{load}        = $1;				#add hash element 
+            $daemons{$key}{active}      = $2;				#add hash element 
+            $daemons{$key}{sub}         = $3;				#add hash element 
+            $daemons{$key}{description} = $4;				#add hash element 
+            print "   unit:$daemons{$key}{unit} load:$daemons{$key}{load} active:$daemons{$key}{active} sub:$daemons{$key}{sub} description:$daemons{$key}{description} \n" if ($verbose eq "yes");
+            $daemons{count}{running}++;					#increment counter of running daemons
+         } 								#end of if block
+      }									#end of while loop
+      close IN;								#close filehandle
+   }									#end of foreach loop
+}									#end of subroutine
+
+
+
+
+
+
+
+
+
+sub print_output {
+   #
+   print "Running print_output subroutine \n" if ($verbose eq "yes");
+   #
+   $perf_data = "";
+   $common_output_data = "";
+   #
+   # collect common output data 
+   foreach $key (@monitored_daemons) {
+      next unless ( $daemons{$key}{unit} );
+      next unless ( $daemons{$key}{active} ); 
+      $common_output_data = "$daemons{$key}{unit}:$daemons{$key}{active} $common_output_data";
+   }
+   #
+   # check the status of all the monitored daemons controlled by systemd
+   #
+   foreach $key (@monitored_daemons) {
+      if  ( ! $daemons{$key}{unit} ) { 
+         $common_output_data = "$key not found, $common_output_data ";
+         $daemons{count}{not_running}++;			#increment counter of daemons that should be running but are not, which indicates a problem
+      }  
+      if  ( $daemons{$key}{unit} ) { 
+         unless ( $daemons{$key}{active} eq "active" ) { 
+            $common_output_data = "$daemons{$key}{unit} state is $daemons{$key}{active}, $common_output_data ";
+            $daemons{count}{not_running}++;			#increment counter of daemons that should be running but are not, which indicates a problem
+         }  
+      }  
+   }
+   #
+   # check for any processes controlled by supervisord
+   #
+   foreach $key (sort keys %supervisord) {
+      if ( $supervisord{$key}{process_state} ne "running" ) {
+         $common_output_data = "supervisord controlled process $supervisord{$key}{process_name} is not running, $common_output_data ";
+         $daemons{count}{not_running}++;			#this is a process rather than a daemon, but let's be lazy and just re-use this counter that indicates problems
+      }											#end of if block
+   }											#end of foreach loop
+   #
+   # print any problems that were found
+   #
+   if ( $daemons{count}{not_running} > 0 ) {
+      print "$CHECK_NAME WARN $common_output_data Linux version:$os{name} $os{version} | $perf_data \n";
+      exit $WARN;
+   }
+   #
+   # we should only get this far if everything is good
+   #
+   if ( $daemons{count}{not_running} == 0 ) {
+      print "$CHECK_NAME OK $common_output_data Linux version:$os{name} $os{version}| $perf_data \n";
+      exit $OK;
+   }
+}															#end of subroutine
+
+
+
+
+# ---------------- main body of script -------------------------
+get_options;
+sanity_checks;
+determine_os;
+get_linux_version;
+check_ssh_daemon;
+check_nutanix_guest_tools;
+check_vmware_guest_tools;
+check_virtualbox_guest_tools;
+check_supervisord_daemon;
+check_supervisord_controlled_processes;
+check_assorted_daemons;
+check_running_daemons;
+print_output;
+
