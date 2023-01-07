@@ -10,6 +10,7 @@
 #  2022/12/02	njeffrey	Add subroutines: check_nutanix_guest_tools, check_vmware_guest_tools, check_virtualbox_guest_tools 
 #  2022/12/02	njeffrey	Add subroutines: check_supervisord_daemon, check_supervisord_controlled_processes
 #  2022/12/07	njeffrey	Add subroutines: check_assorted_daemons
+#  2023/01/06	njeffrey	Add support for Ubuntu 22.04
 
 
 # NOTES
@@ -70,6 +71,10 @@
 
 # TROUBLESHOOTING
 # ---------------
+# /usr/bin/dmesg can be run by low-privilege user on RHEL derivatives, but needs root privileges on Debian derivatives (Ubuntu 22.04 and later)
+# Can relax dmesg permissions on Ubuntu with: sudo sysctl kernel.dmesg_restrict=0
+
+
 
 use strict;						#enforce good coding practices
 use Getopt::Long;                       		#allow --long-switches to be used as parameters
@@ -86,7 +91,7 @@ $verbose            = "no";				#yes/no flag to increase verbosity during debuggi
 $common_output_data = "";                               #nagios output
 $perf_data          = "";                               #nagios performance data included in output
 $CHECK_NAME         = "linux daemons";
-@monitored_daemons  = ("auditd.service","chronyd.service","crond.service","fail2ban.service","firewalld.service","rsyslog.service","snmpd.service");
+#@monitored_daemons  = ("auditd.service","chronyd.service","crond.service","fail2ban.service","firewalld.service","rsyslog.service","snmpd.service");
 $daemons{count}{running}     = 0;					#initialize counter
 $daemons{count}{not_running} = 0;					#initialize counter
 #
@@ -128,7 +133,6 @@ sub get_options {
       $verbose = "no";
    }
 }                       #end of subroutine
-
 
 
 
@@ -317,11 +321,14 @@ sub get_linux_version {
       $os{name}       = $1 if ( /^NAME=\"([a-zA-Z ]+)\"/);
       $os{version}    = $1 if ( /^VERSION=\"([0-9\.]+)\"/);		#Oracle Linux format is:  VERSION="8.5"
       $os{version}    = $1 if ( /^VERSION=\"([0-9\.]+) \(.*\)\"/);	#RHEL format is:          VERSION="8.5 (Ootpa)"
-      $os{id}         = $1 if ( /^ID=\"([a-z]+)\"/);
-      $os{version_id} = $1 if ( /^VERSION_ID=\"([0-9\.]+)\"/);
+      $os{version}    = $1 if ( /^VERSION_ID=\"([0-9\.]+)\"/);		#Ubuntu format is: VERSION_ID="22.04"
+      $os{id}         = $1 if ( /^ID=\"([a-z]+)\"/);			#short id value will be one of rhel|centos|ol|rocky|ubuntu
+      $os{id}         = $1 if ( /^ID=([a-z]+)/);			#same as above but without quoatation marks
    }									#end of while loop
    print "   operating system long name is $os{name} $os{version} short name is $os{id}$os{version} \n" if ($verbose eq "yes");
 }									#end of subroutine
+
+
 
 
 sub check_ssh_daemon {
@@ -373,7 +380,7 @@ sub check_nutanix_guest_tools {
    # Query the hardware to see if the BIOS reports as being Nutanix, if so, add to the @monitored_daemons array
    $cmd = "$dmesg";
    print "   running command: $cmd \n" if ($verbose eq "yes");
-   open(IN,"$cmd |");                                                   #open filehandle using command output
+   open(IN,"$cmd 2>&1|");                                                   #open filehandle using command output
    while (<IN>) {                                                       #read a line from the command output
       if (/Nutanix AHV, BIOS/)  { 
          push (@monitored_daemons,"ngt_guest_agent.service");
@@ -398,7 +405,7 @@ sub check_vmware_guest_tools {
    # Query the hardware to see if the BIOS reports as being VMware, if so, add to the @monitored_daemons array
    $cmd = "$dmesg";
    print "   running command: $cmd \n" if ($verbose eq "yes");
-   open(IN,"$cmd |");                                                   #open filehandle using command output
+   open(IN,"$cmd 2>&1|");                                                   #open filehandle using command output
    while (<IN>) {                                                       #read a line from the command output
       if (/DMI: VMware, Inc. VMware Virtual Platform/)  { 
          push (@monitored_daemons,"vmtoolsd.service");
@@ -407,6 +414,7 @@ sub check_vmware_guest_tools {
    }									#end of while loop
    close IN;								#close filehandle
 }									#end of subroutine
+
 
 
 
@@ -422,7 +430,7 @@ sub check_virtualbox_guest_tools {
    # Query the hardware to see if the BIOS reports as being VirtualBox, if so, add to the @monitored_daemons array
    $cmd = "$dmesg";
    print "   running command: $cmd \n" if ($verbose eq "yes");
-   open(IN,"$cmd |");                                                   #open filehandle using command output
+   open(IN,"$cmd 2>&1|");                                                   #open filehandle using command output
    while (<IN>) {                                                       #read a line from the command output
       if (/BIOS VirtualBox/)  { 
          push (@monitored_daemons,"vboxadd.service");
@@ -431,6 +439,8 @@ sub check_virtualbox_guest_tools {
    }									#end of while loop
    close IN;								#close filehandle
 }									#end of subroutine
+
+
 
 
 sub check_supervisord_daemon {
@@ -489,6 +499,7 @@ sub check_supervisord_controlled_processes {
 
 
 
+
 sub check_assorted_daemons {
    #
    print "Running check_assorted_daemons subroutine \n" if ($verbose eq "yes");
@@ -501,6 +512,75 @@ sub check_assorted_daemons {
       push (@monitored_daemons,"container-gitlab.service");
       print "   found /etc/systemd/system/container-gitlab.service, adding container-gitlab.service to list of monitored daemons \n" if ($verbose eq "yes");
    }
+   #
+   # Checking for cron daemon
+   # crond.service on RHEL/CentOS, cron.service on Debian/Ubuntu
+   if ( -f "/usr/lib/systemd/system/crond.service") { 
+      push (@monitored_daemons,"crond.service");
+      print "   found /usr/lib/systemd/system/crond.service, adding crond.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   if ( -f "/usr/lib/systemd/system/cron.service") { 
+      push (@monitored_daemons,"cron.service");
+      print "   found /usr/lib/systemd/system/cron.service, adding cron.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for NTP daemon
+   # chronyd.service on RHEL/CentOS, timedatectl.service on Debian/Ubuntu
+   if ( -f "/usr/lib/systemd/system/chronyd.service") { 
+      push (@monitored_daemons,"chronyd.service");
+      print "   found /usr/lib/systemd/system/chronyd.service, adding chronyd.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   if ( -f "/usr/lib/systemd/system/systemd-timesyncd.service") { 
+      push (@monitored_daemons,"systemd-timesyncd.service");
+      print "   found /usr/lib/systemd/system/systemd-timesyncd.service, adding systemd-timesyncd to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for firewall daemon
+   # firewalld.service on RHEL/CentOS, ufw.service on Debian/Ubuntu
+   if ( -f "/usr/lib/systemd/system/firewalld.service") { 
+      push (@monitored_daemons,"firewalld.service");
+      print "   found /usr/lib/systemd/system/firewalld.service, adding firewalld.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   if ( -f "/usr/lib/systemd/system/ufw.service") { 
+      push (@monitored_daemons,"ufw.service");
+      print "   found /usr/lib/systemd/system/ufw.service, adding ufw.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for SNMP daemon
+   # same name on RHEL derivatives and Debian derivatives
+   if ( -f "/usr/lib/systemd/system/snmpd.service") { 
+      push (@monitored_daemons,"snmpd.service");
+      print "   found /usr/lib/systemd/system/snmpd.service, adding snmpd.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for rsyslog daemon
+   # same name on RHEL derivatives and Debian derivatives
+   if ( -f "/usr/lib/systemd/system/rsyslog.service") { 
+      push (@monitored_daemons,"rsyslog.service");
+      print "   found /usr/lib/systemd/system/rsyslog.service, adding rsyslog.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for audit daemon 
+   # only exists on RHEL derivatives, not Debian/Ubuntu
+   if ( -f "/usr/lib/systemd/system/auditd.service") { 
+      push (@monitored_daemons,"auditd.service");
+      print "   found /usr/lib/systemd/system/auditd.service, adding auditd.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for fail2ban daemon 
+   # same name on RHEL derivatives and Debian derivatives
+   if ( -f "/usr/lib/systemd/system/fail2ban.service") { 
+      push (@monitored_daemons,"fail2ban.service");
+      print "   found /usr/lib/systemd/system/fail2ban.service, adding fail2ban.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for postfix daemon 
+   # same name on RHEL derivatives and Debian derivatives
+   if ( -f "/usr/lib/systemd/system/postfix.service") { 
+      push (@monitored_daemons,"postfix.service");
+      print "   found /usr/lib/systemd/system/postfix.service, adding postfix.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   
 }									#end of subroutine
 
 
@@ -553,11 +633,6 @@ sub check_running_daemons {
       close IN;								#close filehandle
    }									#end of foreach loop
 }									#end of subroutine
-
-
-
-
-
 
 
 
