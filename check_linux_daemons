@@ -11,6 +11,7 @@
 #  2022/12/02	njeffrey	Add subroutines: check_supervisord_daemon, check_supervisord_controlled_processes
 #  2022/12/07	njeffrey	Add subroutines: check_assorted_daemons
 #  2023/01/06	njeffrey	Add support for Ubuntu 22.04
+#  2023/01/30	njeffrey	Add support for Ubuntu 20.04
 
 
 # NOTES
@@ -450,8 +451,16 @@ sub check_supervisord_daemon {
    # supervisord is a process control system that is simpler to use than systemd
    # If the supervisord binary exists, add supervisord.service to @monitored_daemons
    #
+   # On Ubuntu 20.04, the systemctl daemon is supervisor.service
+   # On Ubuntu 22.04, the systemctl daemon is supervisord.service
+   #
+   #
    print "   checking for existence of /usr/bin/supervisord \n" if ($verbose eq "yes");
-   if ( -f "/usr/bin/supervisord") { 
+   if ( (-f "/usr/bin/supervisord") && (-f "/usr/lib/systemd/system/supervisor.service") ) {  #Ubuntu 20.04
+      push (@monitored_daemons,"supervisor.service");
+      print "   found /usr/bin/supervisord, adding supervisor.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   if ( (-f "/usr/bin/supervisord") && (-f "/usr/lib/systemd/system/supervisord.service") ) {  #Ubuntu 22.04
       push (@monitored_daemons,"supervisord.service");
       print "   found /usr/bin/supervisord, adding supervisord.service to list of monitored daemons \n" if ($verbose eq "yes");
    }
