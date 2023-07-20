@@ -12,6 +12,7 @@
 #  2022/12/07	njeffrey	Add subroutines: check_assorted_daemons
 #  2023/01/06	njeffrey	Add support for Ubuntu 22.04
 #  2023/01/30	njeffrey	Add support for Ubuntu 20.04
+#  2023/07/20	njeffrey	Add arcticwolfagent.service to check_assorted_daemons subroutine
 
 
 # NOTES
@@ -588,6 +589,13 @@ sub check_assorted_daemons {
    if ( -f "/usr/lib/systemd/system/postfix.service") { 
       push (@monitored_daemons,"postfix.service");
       print "   found /usr/lib/systemd/system/postfix.service, adding postfix.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for arcticwolfagent service
+   # same name on RHEL derivatives and Debian derivatives
+   if ( -f "/etc/systemd/system/arcticwolfagent.service") { 
+      push (@monitored_daemons,"arcticwolfagent.service");
+      print "   found /etc/systemd/system/arcticwolfagent.service, adding arcticwolfagent.service to list of monitored daemons \n" if ($verbose eq "yes");
    }
    
 }									#end of subroutine
