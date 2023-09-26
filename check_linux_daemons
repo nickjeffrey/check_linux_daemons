@@ -13,6 +13,7 @@
 #  2023/01/06	njeffrey	Add support for Ubuntu 22.04
 #  2023/01/30	njeffrey	Add support for Ubuntu 20.04
 #  2023/07/20	njeffrey	Add arcticwolfagent.service to check_assorted_daemons subroutine
+#  2023/09/26	njeffrey	Add sentinelone.service     to check_assorted_daemons subroutine
 
 
 # NOTES
@@ -597,7 +598,13 @@ sub check_assorted_daemons {
       push (@monitored_daemons,"arcticwolfagent.service");
       print "   found /etc/systemd/system/arcticwolfagent.service, adding arcticwolfagent.service to list of monitored daemons \n" if ($verbose eq "yes");
    }
-   
+   #
+   # Checking for sentinelone service
+   # same name on RHEL derivatives and Debian derivatives
+   if ( -f "/usr/lib/systemd/system/sentinelone.service") { 
+      push (@monitored_daemons,"sentinelone.service");
+      print "   found /usr/lib/systemd/system/sentinelone.service, adding sentinelone.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
 }									#end of subroutine
 
 
