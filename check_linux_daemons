@@ -14,6 +14,7 @@
 #  2023/01/30	njeffrey	Add support for Ubuntu 20.04
 #  2023/07/20	njeffrey	Add arcticwolfagent.service to check_assorted_daemons subroutine
 #  2023/09/26	njeffrey	Add sentinelone.service     to check_assorted_daemons subroutine
+#  2023/10/05	njeffrey	Add falcon-sensor.service   to check_assorted_daemons subroutine
 
 
 # NOTES
@@ -604,6 +605,13 @@ sub check_assorted_daemons {
    if ( -f "/usr/lib/systemd/system/sentinelone.service") { 
       push (@monitored_daemons,"sentinelone.service");
       print "   found /usr/lib/systemd/system/sentinelone.service, adding sentinelone.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for falcon-sensor service (aka CrowdStrike agent)
+   # same name on RHEL derivatives and Debian derivatives
+   if ( -f "/usr/lib/systemd/system/falcon-sensor.service") { 
+      push (@monitored_daemons,"falcon-sensor.service");
+      print "   found /usr/lib/systemd/system/falcon-sensor.service, adding falcon-sensor.service to list of monitored daemons \n" if ($verbose eq "yes");
    }
 }									#end of subroutine
 
