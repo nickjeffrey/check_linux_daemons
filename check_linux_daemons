@@ -15,6 +15,7 @@
 #  2023/07/20	njeffrey	Add arcticwolfagent.service to check_assorted_daemons subroutine
 #  2023/09/26	njeffrey	Add sentinelone.service     to check_assorted_daemons subroutine
 #  2023/10/05	njeffrey	Add falcon-sensor.service   to check_assorted_daemons subroutine
+#  2024/02/15	njeffrey	Add httpd.service, apache2.service, mariadb.service, postgresql.service to check_assorted_daemons subroutine
 
 
 # NOTES
@@ -613,6 +614,31 @@ sub check_assorted_daemons {
       push (@monitored_daemons,"falcon-sensor.service");
       print "   found /usr/lib/systemd/system/falcon-sensor.service, adding falcon-sensor.service to list of monitored daemons \n" if ($verbose eq "yes");
    }
+   #
+   # Checking for web server
+   # httpd.service on RHEL/CentOS, apache2.service on Debian/Ubuntu
+   if ( -f "/usr/lib/systemd/system/httpd.service") { 
+      push (@monitored_daemons,"httpd.service");
+      print "   found /usr/lib/systemd/system/httpd.service, adding httpd.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   if ( -f "/usr/lib/systemd/system/apache2.service") { 
+      push (@monitored_daemons,"apache2.service");
+      print "   found /usr/lib/systemd/system/apache2.service, adding apache2.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for mariadb database
+   if ( -f "/usr/lib/systemd/system/mariadb.service") { 
+      push (@monitored_daemons,"mariadb.service");
+      print "   found /usr/lib/systemd/system/mariadb.service, adding mariadb.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+   #
+   # Checking for postgresql database
+   if ( -f "/usr/lib/systemd/system/postgresql.service") { 
+      push (@monitored_daemons,"postgresql.service");
+      print "   found /usr/lib/systemd/system/postgresql.service, adding postgresql.service to list of monitored daemons \n" if ($verbose eq "yes");
+   }
+
+   
 }									#end of subroutine
 
 
