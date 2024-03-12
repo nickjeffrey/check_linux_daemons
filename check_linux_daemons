@@ -16,13 +16,15 @@
 #  2023/09/26	njeffrey	Add sentinelone.service     to check_assorted_daemons subroutine
 #  2023/10/05	njeffrey	Add falcon-sensor.service   to check_assorted_daemons subroutine
 #  2024/02/15	njeffrey	Add httpd.service, apache2.service, mariadb.service, postgresql.service to check_assorted_daemons subroutine
+#  2024/03/11	njeffrey	Check for systemctl and dmesg in both /usr/bin/ and /bin/
+#  2024/03/11	njeffrey	Adjust regex for $os{name} to capture / character in GNU/Linux
 
 
 # NOTES
 # -----
 #  This script performs basic health checks on Linux for running daemons
 #
-#  Tested on CentOS 7,8,9 Ubuntu 22.04 
+#  Tested on CentOS 7,8,9 Ubuntu 22.04 , Raspian 10
 #
 #
 #  This script is executed remotely on a monitored system by the NRPE or check_by_ssh
@@ -91,6 +93,7 @@ my ($systemctl,$uname,$ps,$dmesg);
 my ($common_output_data,$perf_data);
 my ($OK,$WARN,$CRITICAL,$UNKNOWN,$CHECK_NAME);
 my ($offset,$last_update);
+my ($location,@locations,$servicename,@servicenames);
 my ($opt_h,$opt_v);
 $verbose            = "no";				#yes/no flag to increase verbosity during debugging
 $common_output_data = "";                               #nagios output
@@ -99,6 +102,8 @@ $CHECK_NAME         = "linux daemons";
 #@monitored_daemons  = ("auditd.service","chronyd.service","crond.service","fail2ban.service","firewalld.service","rsyslog.service","snmpd.service");
 $daemons{count}{running}     = 0;					#initialize counter
 $daemons{count}{not_running} = 0;					#initialize counter
+@locations = ("/usr/lib/systemd/system", "/lib/systemd/system", "/etc/systemd/system");  #directories containing the *.service files
+@servicenames = ("container-gitlab.service", "crond.service", "cron.service", "chronyd.service", "systemd-timesyncd.service", "firewalld.service", "ufw.service", "snmpd.service", "rsyslog.service", "auditd.service", "fail2ban.service", "postfix.service", "arcticwolfagent.service", "sentinelone.service", "falcon-sensor.service", "httpd.service", "apache2.service", "mariadb.service", "postgresql.service");
 #
 # Nagios return codes
 #
@@ -180,6 +185,8 @@ sub sanity_checks {
    #
    # confirm systemctl binary exists and is executable
    $systemctl = "/usr/bin/systemctl";	
+   $systemctl = "/usr/bin/systemctl" if (-e "/usr/bin/systemctl");	#location in RHEL 
+   $systemctl = "/bin/systemctl"     if (-e "/bin/systemctl");	        #location in Debian
    if ( ! -e $systemctl ) {
       print "ERROR: Cannot find $systemctl binary \n";
       exit $CRITICAL;
@@ -192,6 +199,8 @@ sub sanity_checks {
    #
    # confirm dmesg binary exists and is executable
    $dmesg = "/usr/bin/dmesg";	
+   $dmesg = "/usr/bin/dmesg" if (-e "/usr/bin/dmesg");			#location in RHEL 
+   $dmesg = "/bin/dmesg"     if (-e "/bin/dmesg");	        	#location in Debian
    if ( ! -e $dmesg ) {
       print "ERROR: Cannot find $dmesg binary \n";
       exit $CRITICAL;
@@ -313,17 +322,32 @@ sub get_linux_version {
    # PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
    # UBUNTU_CODENAME=jammy
    #
-   #
+   # The contents of the /etc/os-release file on Raspberry Pi looks like this:
+   # # cat /etc/os-release
+   # PRETTY_NAME="Raspbian GNU/Linux 10 (buster)"
+   # NAME="Raspbian GNU/Linux"
+   # VERSION_ID="10"
+   # VERSION="10 (buster)"
+   # VERSION_CODENAME=buster
+   # ID=raspbian
+   # ID_LIKE=debian
+   # HOME_URL="http://www.raspbian.org/"
+   # SUPPORT_URL="http://www.raspbian.org/RaspbianForums"
+   # BUG_REPORT_URL="http://www.raspbian.org/RaspbianBugs"
    #
    #
    unless ( -f "/etc/os-release" ) {
       print "ERROR: Cannot find /etc/os-release file \n";
       exit $UNKNOWN;
    }									#end of unless block
+   $os{name}    = "unknown_name";					#initialize hash element to avoid undef errors
+   $os{version} = 0; 							#initialize hash element to avoid undef errors
+   $os{id}      = "unknown_id"; 					#initialize hash element to avoid undef errors
+   #
    print "   reading /etc/os-release file to determine Linux version \n" if ($verbose eq "yes");
    open(IN,"/etc/os-release") or die "Cannot open /etc/os-release for reading $! \n";          #open filehandle 
    while (<IN>) {                                                       #read a line from the command output
-      $os{name}       = $1 if ( /^NAME=\"([a-zA-Z ]+)\"/);
+      $os{name}       = $1 if ( /^NAME=\"([a-zA-Z \/]+)\"/);
       $os{version}    = $1 if ( /^VERSION=\"([0-9\.]+)\"/);		#Oracle Linux format is:  VERSION="8.5"
       $os{version}    = $1 if ( /^VERSION=\"([0-9\.]+) \(.*\)\"/);	#RHEL format is:          VERSION="8.5 (Ootpa)"
       $os{version}    = $1 if ( /^VERSION_ID=\"([0-9\.]+)\"/);		#Ubuntu format is: VERSION_ID="22.04"
@@ -512,7 +536,6 @@ sub check_supervisord_controlled_processes {
 
 
 
-
 sub check_assorted_daemons {
    #
    print "Running check_assorted_daemons subroutine \n" if ($verbose eq "yes");
@@ -520,125 +543,15 @@ sub check_assorted_daemons {
    # This subroutine checks for assorted daemons that only run on a subset of the Linux boxes.
    # If a particular daemon is found, it is added to the list of @monitored_damons 
    #
-   print "   checking for GitLab container called container-gitlab.service \n" if ($verbose eq "yes");
-   if ( -f "/etc/systemd/system/container-gitlab.service") { 
-      push (@monitored_daemons,"container-gitlab.service");
-      print "   found /etc/systemd/system/container-gitlab.service, adding container-gitlab.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for cron daemon
-   # crond.service on RHEL/CentOS, cron.service on Debian/Ubuntu
-   if ( -f "/usr/lib/systemd/system/crond.service") { 
-      push (@monitored_daemons,"crond.service");
-      print "   found /usr/lib/systemd/system/crond.service, adding crond.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   if ( -f "/usr/lib/systemd/system/cron.service") { 
-      push (@monitored_daemons,"cron.service");
-      print "   found /usr/lib/systemd/system/cron.service, adding cron.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for NTP daemon
-   # chronyd.service on RHEL/CentOS, timedatectl.service on Debian/Ubuntu
-   if ( -f "/usr/lib/systemd/system/chronyd.service") { 
-      push (@monitored_daemons,"chronyd.service");
-      print "   found /usr/lib/systemd/system/chronyd.service, adding chronyd.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   if ( -f "/usr/lib/systemd/system/systemd-timesyncd.service") { 
-      push (@monitored_daemons,"systemd-timesyncd.service");
-      print "   found /usr/lib/systemd/system/systemd-timesyncd.service, adding systemd-timesyncd to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for firewall daemon
-   # firewalld.service on RHEL/CentOS, ufw.service on Debian/Ubuntu
-   if ( -f "/usr/lib/systemd/system/firewalld.service") { 
-      push (@monitored_daemons,"firewalld.service");
-      print "   found /usr/lib/systemd/system/firewalld.service, adding firewalld.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   if ( -f "/usr/lib/systemd/system/ufw.service") { 
-      push (@monitored_daemons,"ufw.service");
-      print "   found /usr/lib/systemd/system/ufw.service, adding ufw.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for SNMP daemon
-   # same name on RHEL derivatives and Debian derivatives
-   if ( -f "/usr/lib/systemd/system/snmpd.service") { 
-      push (@monitored_daemons,"snmpd.service");
-      print "   found /usr/lib/systemd/system/snmpd.service, adding snmpd.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for rsyslog daemon
-   # same name on RHEL derivatives and Debian derivatives
-   if ( -f "/usr/lib/systemd/system/rsyslog.service") { 
-      push (@monitored_daemons,"rsyslog.service");
-      print "   found /usr/lib/systemd/system/rsyslog.service, adding rsyslog.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for audit daemon 
-   # only exists on RHEL derivatives, not Debian/Ubuntu
-   if ( -f "/usr/lib/systemd/system/auditd.service") { 
-      push (@monitored_daemons,"auditd.service");
-      print "   found /usr/lib/systemd/system/auditd.service, adding auditd.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for fail2ban daemon 
-   # same name on RHEL derivatives and Debian derivatives
-   if ( -f "/usr/lib/systemd/system/fail2ban.service") { 
-      push (@monitored_daemons,"fail2ban.service");
-      print "   found /usr/lib/systemd/system/fail2ban.service, adding fail2ban.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for postfix daemon 
-   # same name on RHEL derivatives and Debian derivatives
-   if ( -f "/usr/lib/systemd/system/postfix.service") { 
-      push (@monitored_daemons,"postfix.service");
-      print "   found /usr/lib/systemd/system/postfix.service, adding postfix.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for arcticwolfagent service
-   # same name on RHEL derivatives and Debian derivatives
-   if ( -f "/etc/systemd/system/arcticwolfagent.service") { 
-      push (@monitored_daemons,"arcticwolfagent.service");
-      print "   found /etc/systemd/system/arcticwolfagent.service, adding arcticwolfagent.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for sentinelone service
-   # same name on RHEL derivatives and Debian derivatives
-   if ( -f "/usr/lib/systemd/system/sentinelone.service") { 
-      push (@monitored_daemons,"sentinelone.service");
-      print "   found /usr/lib/systemd/system/sentinelone.service, adding sentinelone.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for falcon-sensor service (aka CrowdStrike agent)
-   # same name on RHEL derivatives and Debian derivatives
-   if ( -f "/usr/lib/systemd/system/falcon-sensor.service") { 
-      push (@monitored_daemons,"falcon-sensor.service");
-      print "   found /usr/lib/systemd/system/falcon-sensor.service, adding falcon-sensor.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for web server
-   # httpd.service on RHEL/CentOS, apache2.service on Debian/Ubuntu
-   if ( -f "/usr/lib/systemd/system/httpd.service") { 
-      push (@monitored_daemons,"httpd.service");
-      print "   found /usr/lib/systemd/system/httpd.service, adding httpd.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   if ( -f "/usr/lib/systemd/system/apache2.service") { 
-      push (@monitored_daemons,"apache2.service");
-      print "   found /usr/lib/systemd/system/apache2.service, adding apache2.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for mariadb database
-   if ( -f "/usr/lib/systemd/system/mariadb.service") { 
-      push (@monitored_daemons,"mariadb.service");
-      print "   found /usr/lib/systemd/system/mariadb.service, adding mariadb.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-   #
-   # Checking for postgresql database
-   if ( -f "/usr/lib/systemd/system/postgresql.service") { 
-      push (@monitored_daemons,"postgresql.service");
-      print "   found /usr/lib/systemd/system/postgresql.service, adding postgresql.service to list of monitored daemons \n" if ($verbose eq "yes");
-   }
-
-   
+   foreach $location (@locations) {
+      foreach $servicename (@servicenames) {
+         if ( -f "$location/$servicename") { 
+            push (@monitored_daemons,$servicename);
+            print "   found $location/$servicename, \t\tadding to list of monitored daemons \n" if ($verbose eq "yes");
+         }										#end of if block 
+      } 										#end of foreach block 
+   } 
+#exit; #xxxx
 }									#end of subroutine
 
 
