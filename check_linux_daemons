@@ -18,6 +18,7 @@
 #  2024/02/15	njeffrey	Add httpd.service, apache2.service, mariadb.service, postgresql.service to check_assorted_daemons subroutine
 #  2024/03/11	njeffrey	Check for systemctl and dmesg in both /usr/bin/ and /bin/
 #  2024/03/11	njeffrey	Adjust regex for $os{name} to capture / character in GNU/Linux
+#  2024/07/17	njeffrey	Add OS detection for Debian
 
 
 # NOTES
@@ -335,6 +336,44 @@ sub get_linux_version {
    # SUPPORT_URL="http://www.raspbian.org/RaspbianForums"
    # BUG_REPORT_URL="http://www.raspbian.org/RaspbianBugs"
    #
+   # The contents of the /etc/os-release file on Ubuntu 20.04 looks like this:
+   # NAME="Ubuntu"
+   # VERSION="20.04.6 LTS (Focal Fossa)"
+   # ID=ubuntu
+   # ID_LIKE=debian
+   # PRETTY_NAME="Ubuntu 20.04.6 LTS"
+   # VERSION_ID="20.04"
+   # HOME_URL="https://www.ubuntu.com/"
+   # SUPPORT_URL="https://help.ubuntu.com/"
+   # BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+   # PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+   # VERSION_CODENAME=focal
+   # UBUNTU_CODENAME=focal
+   #
+   # The contents of the /etc/os-release file on Ubuntu 22.04 looks like this:
+   # PRETTY_NAME="Ubuntu 22.04.4 LTS"
+   # NAME="Ubuntu"
+   # VERSION_ID="22.04"
+   # VERSION="22.04.4 LTS (Jammy Jellyfish)"
+   # VERSION_CODENAME=jammy
+   # ID=ubuntu
+   # ID_LIKE=debian
+   # HOME_URL="https://www.ubuntu.com/"
+   # SUPPORT_URL="https://help.ubuntu.com/"
+   # BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+   # PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+   # UBUNTU_CODENAME=jammy
+   #
+   # The contents of the /etc/os-release file on Debian 12 looks like this:
+   # PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+   # NAME="Debian GNU/Linux"
+   # VERSION_ID="12"
+   # VERSION="12 (bookworm)"
+   # VERSION_CODENAME=bookworm
+   # ID=debian
+   # HOME_URL="https://www.debian.org/"
+   # SUPPORT_URL="https://www.debian.org/support"
+   # BUG_REPORT_URL="https://bugs.debian.org/"
    #
    unless ( -f "/etc/os-release" ) {
       print "ERROR: Cannot find /etc/os-release file \n";
