@@ -19,13 +19,14 @@
 #  2024/03/11	njeffrey	Check for systemctl and dmesg in both /usr/bin/ and /bin/
 #  2024/03/11	njeffrey	Adjust regex for $os{name} to capture / character in GNU/Linux
 #  2024/07/17	njeffrey	Add OS detection for Debian
+#  2024/08/06	njeffrey	Add optional config file 
 
 
 # NOTES
 # -----
 #  This script performs basic health checks on Linux for running daemons
 #
-#  Tested on CentOS 7,8,9 Ubuntu 22.04 , Raspian 10
+#  Tested on CentOS 7,8,9 Ubuntu 22.04 , Raspian 10.  Expected to work on any distro using systemd.
 #
 #
 #  This script is executed remotely on a monitored system by the NRPE or check_by_ssh
@@ -89,11 +90,12 @@ use Getopt::Long;                       		#allow --long-switches to be used as p
 
 #declare variables
 my ($verbose,$os,$cmd,$key,$count);
-my (%os,%daemons,@monitored_daemons,%supervisord);
+my (%os,%daemons,@monitored_daemons,@ignored_daemons,%supervisord);
 my ($systemctl,$uname,$ps,$dmesg);
 my ($common_output_data,$perf_data);
 my ($OK,$WARN,$CRITICAL,$UNKNOWN,$CHECK_NAME);
 my ($offset,$last_update);
+my ($config_file,@list_of_daemons_to_ignore);
 my ($location,@locations,$servicename,@servicenames);
 my ($opt_h,$opt_v);
 $verbose            = "no";				#yes/no flag to increase verbosity during debugging
@@ -105,6 +107,8 @@ $daemons{count}{running}     = 0;					#initialize counter
 $daemons{count}{not_running} = 0;					#initialize counter
 @locations = ("/usr/lib/systemd/system", "/lib/systemd/system", "/etc/systemd/system");  #directories containing the *.service files
 @servicenames = ("container-gitlab.service", "crond.service", "cron.service", "chronyd.service", "systemd-timesyncd.service", "firewalld.service", "ufw.service", "snmpd.service", "rsyslog.service", "auditd.service", "fail2ban.service", "postfix.service", "arcticwolfagent.service", "sentinelone.service", "falcon-sensor.service", "httpd.service", "apache2.service", "mariadb.service", "postgresql.service");
+$config_file        = "/usr/local/nagios/libexec/check_linux_daemons.cfg";                  #location of config file holding device-specific customizations
+
 #
 # Nagios return codes
 #
@@ -214,6 +218,42 @@ sub sanity_checks {
 }						#end of subroutine
 
 
+sub read_config_file {
+   #
+   # This subroutine reads an *optional* config file that contains a list of usernames to be added to the @list_of_users array.
+   # The optional config file is to provide the capability of having device-specific daemons that should be  ignored by the check script.
+   # A sample config file looks like the following:
+   # 
+   # # Provide a comma separated list of systemd service files that should NOT be alerted on.
+   # # For example, if a particular host should NOT be running firewalld, add to the following line.
+   # ignore_daemons=firewalld.service,otherdaemon.service
+   #
+   print "running read_config_file subroutine \n" if ($verbose eq "yes");
+   #
+   if ( ! -f "$config_file" ) {                                                                 #confirm the config file exists
+      print "   config file $config_file does not exist, using default list of systemd service files \n" if ($verbose eq "yes");
+   }                                                                                            #end of if block
+   if ( -z "$config_file" ) {                                                                   #confirm the config file is larger than zero bytes
+      print "   config file $config_file exists but is zero size, using default list of systemd service files \n" if ($verbose eq "yes");
+   }                                                                                            #end of if block
+   if ( -f "$config_file" ) {                                                                   #confirm the config file exists
+      open(IN,"$config_file") or die "Cannot read config file $config_file $! \n";              #open file for reading
+      while (<IN>) {                                                                            #read a line from the command output
+         #
+         # look for a line in the config file similar to: ignore_daemons=firewalld.service,otherdaemon.service
+         #
+         if (/^ignore_daemons=(.*)/){                                                           #find the line in the config file
+            print "   found list of users: $1 \n" if ($verbose eq "yes");
+            @_ = split(',', $1);                                                                #split the contents of regex match into array elements
+            foreach (@_) {                                                                      #loop through the array
+               print "   adding $_ to list_of_daemons_to_ignore array \n" if ($verbose eq "yes");
+               push @list_of_daemons_to_ignore, $_;
+            }                                                                                   #end of foreach loop
+         }                                                                                      #end of if block
+      }                                                                                         #end of while loop
+      close IN;                                                                                 #close filehandle
+   }                                                                                            #end of if block
+}
 
 
 sub determine_os {
@@ -587,12 +627,35 @@ sub check_assorted_daemons {
          if ( -f "$location/$servicename") { 
             push (@monitored_daemons,$servicename);
             print "   found $location/$servicename, \t\tadding to list of monitored daemons \n" if ($verbose eq "yes");
-         }										#end of if block 
-      } 										#end of foreach block 
-   } 
-#exit; #xxxx
+         }								#end of if block 
+      } 								#end of outer foreach block 
+   } 									#end of inner foreach block
 }									#end of subroutine
 
+
+
+sub remove_exceptions {
+   #
+   print "Running remove_exceptions subroutine \n" if ($verbose eq "yes");
+   #
+   # This subroutine will take any values from the optional config file
+   # and remove any daemons found in the ignore_daemons=xxx section of the config file
+   # from the list of daemons to be monitored on this host.
+   #
+   my %seen;	 							#hash to track ignored daemons
+   foreach my $ignore (@list_of_daemons_to_ignore) { 			#iterate over @list_of_daemons_to_ignore
+      for (my $i = 0; $i < @monitored_daemons; $i++) {			#iterate over @monitored_daemons with index
+         if ($monitored_daemons[$i] eq $ignore) {			#check to see if this daemon should be ignored
+            unless ($seen{$ignore}++) { 				#check if this daemons has already been processed
+               print "   removing $ignore from list of monitored daemons  \n" if ($verbose eq "yes");
+               push  (@ignored_daemons,$ignore); 			#add element to array containing all the ignored daemons
+            } 								#end of unless block
+            splice(@monitored_daemons, $i, 1);				#remove element if found
+            $i--;							#since we removed an element, decrement the index
+         }								#end of if block
+      }									#end of for loop
+   }									#end of foreach loop
+}									#end of subroutine
 
 
 
@@ -685,6 +748,12 @@ sub print_output {
       }											#end of if block
    }											#end of foreach loop
    #
+   # check for any daemons that should be ignored, this list comes from the optional $config_file
+   #
+   foreach $key (@ignored_daemons) {
+      $common_output_data = "$common_output_data ignoring_daemon:$key";
+   }
+   #
    # print any problems that were found
    #
    if ( $daemons{count}{not_running} > 0 ) {
@@ -706,6 +775,7 @@ sub print_output {
 # ---------------- main body of script -------------------------
 get_options;
 sanity_checks;
+read_config_file;
 determine_os;
 get_linux_version;
 check_ssh_daemon;
@@ -715,6 +785,7 @@ check_virtualbox_guest_tools;
 check_supervisord_daemon;
 check_supervisord_controlled_processes;
 check_assorted_daemons;
+remove_exceptions;
 check_running_daemons;
 print_output;
 
