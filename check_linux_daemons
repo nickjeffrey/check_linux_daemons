@@ -21,6 +21,7 @@
 #  2024/07/17	njeffrey	Add OS detection for Debian
 #  2024/08/06	njeffrey	Add optional config file 
 #  2025/02/08	njeffrey	Add pemagent.service (Postgres Enterprise Manager Agent), edb-as-15.service (EnterpriseDB)
+#  2025/03/19	njeffrey	Bug fix for Ubuntu 24.04, regex was capturing ssh.service and sshd.service
 
 
 # NOTES
@@ -449,7 +450,8 @@ sub check_ssh_daemon {
    #
    # Command output on a Debian derivative looks similar to:
    # # systemctl list-units --all
-   # ssh.service   loaded   active   running   OpenBSD Secure Shell server
+   # ssh.service     loaded    active   running   OpenBSD Secure Shell server
+   # ● sshd.service  not-found inactive dead      sshd.service 
    #
    # Command output on a RHEL derivative looks similar to:
    # # systemctl list-units --all
@@ -464,10 +466,12 @@ sub check_ssh_daemon {
       s/\t/ /g;								#replace tabs with spaces
       s/ +/ /g; 							#replace multiple spaces with single space to make the regex simpler
       if (/ssh.service/)  { 
+	 next if (/not\-found/);					#skip if the LOAD column contains "not-found"
          push (@monitored_daemons,"ssh.service");
          print "   found SSH daemon ssh.service \n" if ($verbose eq "yes");
       }
       if (/sshd.service/) { 
+	 next if (/not\-found/);					#skip if the LOAD column contains "not-found"
          push (@monitored_daemons,"sshd.service");
          print "   found SSH daemon sshd.service \n" if ($verbose eq "yes");
       }
