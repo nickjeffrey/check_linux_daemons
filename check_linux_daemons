@@ -22,6 +22,7 @@
 #  2024/08/06	njeffrey	Add optional config file 
 #  2025/02/08	njeffrey	Add pemagent.service (Postgres Enterprise Manager Agent), edb-as-15.service (EnterpriseDB)
 #  2025/03/19	njeffrey	Bug fix for Ubuntu 24.04, regex was capturing ssh.service and sshd.service
+#  2026/06/05	njeffrey	Add jobsub.service and glassfish_optix.service
 
 
 # NOTES
@@ -108,7 +109,7 @@ $CHECK_NAME         = "linux daemons";
 $daemons{count}{running}     = 0;					#initialize counter
 $daemons{count}{not_running} = 0;					#initialize counter
 @locations = ("/usr/lib/systemd/system", "/lib/systemd/system", "/etc/systemd/system");  #directories containing the *.service files
-@servicenames = ("container-gitlab.service", "crond.service", "cron.service", "chronyd.service", "systemd-timesyncd.service", "firewalld.service", "ufw.service", "snmpd.service", "rsyslog.service", "auditd.service", "fail2ban.service", "postfix.service", "arcticwolfagent.service", "sentinelone.service", "falcon-sensor.service", "httpd.service", "apache2.service", "mariadb.service", "postgresql.service", "pemagent.service", "edb-as-15.service");
+@servicenames = ("container-gitlab.service", "crond.service", "cron.service", "chronyd.service", "systemd-timesyncd.service", "firewalld.service", "ufw.service", "snmpd.service", "rsyslog.service", "auditd.service", "fail2ban.service", "postfix.service", "arcticwolfagent.service", "sentinelone.service", "falcon-sensor.service", "httpd.service", "apache2.service", "mariadb.service", "postgresql.service", "pemagent.service", "edb-as-15.service","jobsub.service","glassfish_optix.service");
 $config_file        = "/usr/local/nagios/libexec/check_linux_daemons.cfg";                  #location of config file holding device-specific customizations
 
 #
