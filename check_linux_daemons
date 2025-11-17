@@ -22,7 +22,7 @@
 #  2024/08/06	njeffrey	Add optional config file 
 #  2025/02/08	njeffrey	Add pemagent.service (Postgres Enterprise Manager Agent), edb-as-15.service (EnterpriseDB)
 #  2025/03/19	njeffrey	Bug fix for Ubuntu 24.04, regex was capturing ssh.service and sshd.service
-#  2026/06/05	njeffrey	Add jobsub.service and glassfish_optix.service
+#  2025/06/05	njeffrey	Add jobsub.service and glassfish_optix.service
 
 
 # NOTES
