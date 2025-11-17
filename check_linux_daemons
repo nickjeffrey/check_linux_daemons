@@ -23,7 +23,7 @@
 #  2025/02/08	njeffrey	Add pemagent.service (Postgres Enterprise Manager Agent), edb-as-15.service (EnterpriseDB)
 #  2025/03/19	njeffrey	Bug fix for Ubuntu 24.04, regex was capturing ssh.service and sshd.service
 #  2025/06/05	njeffrey	Add jobsub.service and glassfish_optix.service
-#  2025/11/16	njeffrey	Bug fix for Ubuntu 24.04, regex was capturing ssh.service and sssd-ssh.service
+#  2025/11/17	njeffrey	Bug fix for Ubuntu 24.04, regex was capturing ssh.service and sssd-ssh.service, add ^ anchor to regex
 
 
 # NOTES
@@ -463,24 +463,25 @@ sub check_ssh_daemon {
    # Figure out which SSH daemon is in use, and add to the @monitored_daemons array
    $cmd = "$systemctl list-units --all";
    print "   running command: $cmd \n" if ($verbose eq "yes");
-   open(IN,"$cmd |");                                       #open filehandle using command output
-   while (<IN>) {                                           #read a line from the command output
-      next if (/UNIT +LOAD +ACTIVE +SUB +DESCRIPTION/);		#skip header line
-      s/\t/ /g;												#replace tabs with spaces
-      s/ +/ /g; 											#replace multiple spaces with single space to make the regex simpler
-      if (/ ssh.service/)  {                				#put leading space in regex to avoid capturing sssh-ssh.service
-	 next if (/not\-found/);								#skip if the LOAD column contains "not-found"
+   open(IN,"$cmd |");                                       			#open filehandle using command output
+   while (<IN>) {                                           			#read a line from the command output
+      next if (/UNIT +LOAD +ACTIVE +SUB +DESCRIPTION/);				#skip header line
+      s/\t/ /g;									#replace tabs with spaces
+      s/ +/ /g; 								#replace multiple spaces with single space to make the regex simpler
+      s/^ //g;                                                       		#remove spaces at beginning of row so we can anchor regex queries
+      if (/^ssh.service/)  {                				
+	 next if (/not\-found/);						#skip if the LOAD column contains "not-found"
          push (@monitored_daemons,"ssh.service");
          print "   found SSH daemon ssh.service \n" if ($verbose eq "yes");
       }
-      if (/sshd.service/) { 
-	 next if (/not\-found/);					#skip if the LOAD column contains "not-found"
+      if (/%sshd.service/) { 
+	 next if (/not\-found/);						#skip if the LOAD column contains "not-found"
          push (@monitored_daemons,"sshd.service");
          print "   found SSH daemon sshd.service \n" if ($verbose eq "yes");
       }
-   }									#end of while loop
-   close IN;								#close filehandle
-}									#end of subroutine
+   }										#end of while loop
+   close IN;									#close filehandle
+}										#end of subroutine
 
 
 
@@ -700,8 +701,9 @@ sub check_running_daemons {
          next if (/UNIT +LOAD +ACTIVE +SUB +DESCRIPTION/);		#skip header line
          s/\t/ /g;							#replace tabs with spaces
          s/ +/ /g; 							#replace multiple spaces with single space to make the regex simpler
+         s/^ //g; 							#remove spaces at beginning of row so we can anchor regex queries
          #print $_;
-         if (/$key ([a-z]+) ([a-z]+) ([a-z]+) (.*)/) {
+         if (/^$key ([a-z]+) ([a-z]+) ([a-z]+) (.*)/) { 		#avoid greedy regex with ^ anchor at beginning of line
             $daemons{$key}{unit}        = $key;				#add hash element 
             $daemons{$key}{load}        = $1;				#add hash element 
             $daemons{$key}{active}      = $2;				#add hash element 
