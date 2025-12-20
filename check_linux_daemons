@@ -640,6 +640,14 @@ sub check_assorted_daemons {
          }								#end of if block 
       } 								#end of outer foreach block 
    } 									#end of inner foreach block
+   #
+   # remove any duplicates from the @monitored_daemons array
+   # we can get duplicates if the different @locations are symlinked to each other
+   #
+   my %seen;								#create a temporary throwaway hash
+   @monitored_daemons = keys %{ { map { $_ => 1 } @monitored_daemons } }; #remove any duplicates from array
+   @monitored_daemons = sort(@monitored_daemons);			#sort the array elements alphabetically
+   print "   monitored_daemons: @monitored_daemons \n" if ($verbose eq "yes");
 }									#end of subroutine
 
 
