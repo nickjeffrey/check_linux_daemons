@@ -251,7 +251,7 @@ sub read_config_file {
          # look for a line in the config file similar to: ignore_daemons=firewalld.service,otherdaemon.service
          #
          if (/^ignore_daemons=(.*)/){                                                           #find the line in the config file
-            print "   found list of users: $1 \n" if ($verbose eq "yes");
+            print "   found daemon to ignore: $1 \n" if ($verbose eq "yes");
             @_ = split(',', $1);                                                                #split the contents of regex match into array elements
             foreach (@_) {                                                                      #loop through the array
                print "   adding $_ to list_of_daemons_to_ignore array \n" if ($verbose eq "yes");
