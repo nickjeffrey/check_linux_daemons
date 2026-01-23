@@ -28,6 +28,7 @@
 #  2026/01/06	njeffrey	Add dcservice.service for ManageEngine Unified Endpoint Management (UEMS) Agent (also known as Desktop Central Agent)
 #  2026/01/15	njeffrey	Add ords.service for Oracle REST Data Services
 #  2026/01/19	njeffrey	Add sssd.service for System Security Services Daemon, used for Active Directory authentication
+#  2026/01/23	njeffrey	Add zoneminder.service
 
 
 # NOTES
@@ -114,7 +115,7 @@ $CHECK_NAME         = "linux daemons";
 $daemons{count}{running}     = 0;					#initialize counter
 $daemons{count}{not_running} = 0;					#initialize counter
 @locations = ("/usr/lib/systemd/system", "/lib/systemd/system", "/etc/systemd/system");  #directories containing the *.service files
-@servicenames = ("container-gitlab.service", "crond.service", "cron.service", "chronyd.service", "systemd-timesyncd.service", "firewalld.service", "ufw.service", "snmpd.service", "rsyslog.service", "auditd.service", "fail2ban.service", "postfix.service", "arcticwolfagent.service", "sentinelone.service", "falcon-sensor.service", "httpd.service", "apache2.service", "mariadb.service", "postgresql.service", "pemagent.service", "edb-as-15.service", "jobsub.service", "glassfish_optix.service", "apparmor.service", "dcservice.service", "ords.service", "sssd.service");
+@servicenames = ("container-gitlab.service", "crond.service", "cron.service", "chronyd.service", "systemd-timesyncd.service", "firewalld.service", "ufw.service", "snmpd.service", "rsyslog.service", "auditd.service", "fail2ban.service", "postfix.service", "arcticwolfagent.service", "sentinelone.service", "falcon-sensor.service", "httpd.service", "apache2.service", "mariadb.service", "postgresql.service", "pemagent.service", "edb-as-15.service", "jobsub.service", "glassfish_optix.service", "apparmor.service", "dcservice.service", "ords.service", "sssd.service", "zoneminder.service");
 $config_file        = "/usr/local/nagios/libexec/check_linux_daemons.cfg";                  #location of config file holding device-specific customizations
 
 #
