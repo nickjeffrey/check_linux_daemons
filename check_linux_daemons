@@ -30,6 +30,7 @@
 #  2026/01/19	njeffrey	Add sssd.service for System Security Services Daemon, used for Active Directory authentication
 #  2026/01/23	njeffrey	Add zoneminder.service
 #  2026/01/29	njeffrey	Add WriteBackExtreme.service
+#  2026/03/26	njeffrey	Add include_ignored_daemons_in_output parameter in config file
 
 
 # NOTES
@@ -100,7 +101,8 @@ use Getopt::Long;                       		#allow --long-switches to be used as p
 
 #declare variables
 my ($verbose,$os,$cmd,$key,$count);
-my (%os,%daemons,@monitored_daemons,@ignored_daemons,%supervisord);
+my (%os,%daemons,@monitored_daemons,%supervisord);
+my (@ignored_daemons,$include_ignored_daemons_in_output);
 my ($systemctl,$uname,$ps,$dmesg);
 my ($common_output_data,$perf_data);
 my ($OK,$WARN,$CRITICAL,$UNKNOWN,$CHECK_NAME);
@@ -118,6 +120,7 @@ $daemons{count}{not_running} = 0;					#initialize counter
 @locations = ("/usr/lib/systemd/system", "/lib/systemd/system", "/etc/systemd/system");  #directories containing the *.service files
 @servicenames = ("container-gitlab.service", "crond.service", "cron.service", "chronyd.service", "systemd-timesyncd.service", "firewalld.service", "ufw.service", "snmpd.service", "rsyslog.service", "auditd.service", "fail2ban.service", "postfix.service", "arcticwolfagent.service", "sentinelone.service", "falcon-sensor.service", "httpd.service", "apache2.service", "mariadb.service", "postgresql.service", "pemagent.service", "edb-as-15.service", "jobsub.service", "glassfish_optix.service", "apparmor.service", "dcservice.service", "ords.service", "sssd.service", "zoneminder.service","aft-extensions-manager.service","WriteBackExtreme.service");
 $config_file        = "/usr/local/nagios/libexec/check_linux_daemons.cfg";                  #location of config file holding device-specific customizations
+$include_ignored_daemons_in_output = "";						#initialize variable to avoid undef errors
 
 #
 # Nagios return codes
@@ -259,6 +262,12 @@ sub read_config_file {
                print "   adding $_ to list_of_daemons_to_ignore array \n" if ($verbose eq "yes");
                push @list_of_daemons_to_ignore, $_;
             }                                                                                   #end of foreach loop
+         }                                                                                      #end of if block
+         #
+         # look for a line in the config file similar to: ignore_daemons=yes
+         #
+         if (/^include_ignored_daemons_in_output=yes/){                                         #find the line in the config file
+            $include_ignored_daemons_in_output = "yes"; 					#define variable from config file
          }                                                                                      #end of if block
       }                                                                                         #end of while loop
       close IN;                                                                                 #close filehandle
@@ -774,8 +783,10 @@ sub print_output {
    #
    # check for any daemons that should be ignored, this list comes from the optional $config_file
    #
-   foreach $key (@ignored_daemons) {
-      $common_output_data = "$common_output_data ignoring_daemon:$key";
+   if ( $include_ignored_daemons_in_output eq "yes") {
+      foreach $key (@ignored_daemons) {
+         $common_output_data = "$common_output_data ignoring_daemon:$key";
+      }
    }
    #
    # print any problems that were found
