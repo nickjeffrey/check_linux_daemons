@@ -31,6 +31,7 @@
 #  2026/01/23	njeffrey	Add zoneminder.service
 #  2026/01/29	njeffrey	Add WriteBackExtreme.service
 #  2026/03/26	njeffrey	Add include_ignored_daemons_in_output parameter in config file
+#  2026/04/24	njeffrey	Add support for ClamAV 
 
 
 # NOTES
@@ -500,6 +501,45 @@ sub check_ssh_daemon {
 
 
 
+sub check_clamav_daemon {
+   #
+   print "Running check_clamav_daemon subroutine \n" if ($verbose eq "yes");
+   #
+   #  RHEL   derivatives call the the clamav daemon:  clamd@scan.service  
+   #  Debian derivatives call the the clamav daemon:  clamav-daemon.service 
+   #
+   # Command output on a Debian derivative looks similar to:
+   # # systemctl list-units --all
+   # clamav-deamon.service    loaded    active   running   clamd scanner (scan) daemon
+   #
+   # Command output on a RHEL derivative looks similar to:
+   # # systemctl list-units --all
+   # clamd@scan.service    loaded    active   running   clamd scanner (scan) daemon
+   #
+   # Figure out which daemon is in use, and add to the @monitored_daemons array
+   $cmd = "$systemctl list-units --all";
+   print "   running command: $cmd \n" if ($verbose eq "yes");
+   open(IN,"$cmd |");                                       			#open filehandle using command output
+   while (<IN>) {                                           			#read a line from the command output
+      next if (/UNIT +LOAD +ACTIVE +SUB +DESCRIPTION/);				#skip header line
+      s/\t/ /g;									#replace tabs with spaces
+      s/ +/ /g; 								#replace multiple spaces with single space to make the regex simpler
+      s/^ //g;                                                       		#remove spaces at beginning of row so we can anchor regex queries
+      if (/^clamav-daemon.service/)  {                				
+	     next if (/not\-found/);						#skip if the LOAD column contains "not-found"
+         push (@monitored_daemons,"clamav-daemon.service");
+         print "   found ClamAV daemon clamav-daemon.service \n" if ($verbose eq "yes");
+      }
+      if (/%clamd\@scan.service/) { 
+	     next if (/not\-found/);						#skip if the LOAD column contains "not-found"
+         push (@monitored_daemons,"clamd\@scan.service");
+         print "   found ClamAV daemon clamd\@scan.service \n" if ($verbose eq "yes");
+      }
+   }										#end of while loop
+   close IN;									#close filehandle
+}										#end of subroutine
+
+
 sub check_nutanix_guest_tools {
    #
    print "Running check_nutanix_guest_tools subroutine \n" if ($verbose eq "yes");
@@ -814,6 +854,7 @@ read_config_file;
 determine_os;
 get_linux_version;
 check_ssh_daemon;
+check_clamav_daemon;
 check_nutanix_guest_tools;
 check_vmware_guest_tools;
 check_virtualbox_guest_tools;
