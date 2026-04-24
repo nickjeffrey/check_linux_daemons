@@ -530,7 +530,7 @@ sub check_clamav_daemon {
          push (@monitored_daemons,"clamav-daemon.service");
          print "   found ClamAV daemon clamav-daemon.service \n" if ($verbose eq "yes");
       }
-      if (/%clamd\@scan.service/) { 
+      if (/^clamd\@scan.service/) { 
 	     next if (/not\-found/);						#skip if the LOAD column contains "not-found"
          push (@monitored_daemons,"clamd\@scan.service");
          print "   found ClamAV daemon clamd\@scan.service \n" if ($verbose eq "yes");
